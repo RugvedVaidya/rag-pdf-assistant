@@ -35,7 +35,7 @@ ollama pull nomic-embed-text
 ### 1. Clone and install
 
 ```bash
-git clone <your-repo>
+git clone <repo-link>
 cd rag-pdf-assistant
 python -m venv venv
 source venv/bin/activate  
