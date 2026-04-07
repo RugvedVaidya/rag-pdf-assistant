@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Docwise — RAG PDF Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d0e10;--surface:#141618;--surface2:#1a1c20;--surface3:#202329;
+  --border:#252830;--border2:#2e3240;--border3:#3a3f50;
+  --text:#e2e4ec;--muted:#6b7080;--muted2:#4a4f60;
+  --accent:#c8a96e;--accent2:#e8c98e;--accent-bg:rgba(200,169,110,0.08);
+  --green:#4caf7d;--green-bg:rgba(76,175,125,0.1);
+  --red:#e05a5a;--red-bg:rgba(224,90,90,0.1);
+  --blue:#6b9fd4;--blue-bg:rgba(107,159,212,0.1);
+  --purple:#9b8fd4;
+  --radius:10px;--radius-lg:14px;
+  --font-sans:'DM Sans',sans-serif;
+  --font-serif:'Instrument Serif',serif;
+  --font-mono:'DM Mono',monospace;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:14px;line-height:1.5}
+
+/* scrollbars */
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* ── Layout ── */
+.app{display:grid;grid-template-columns:260px 1fr;height:100vh;overflow:hidden}
+@media(max-width:700px){.app{grid-template-columns:1fr}.sidebar{display:none}.sidebar.open{display:flex;position:fixed;left:0;top:0;bottom:0;width:280px;z-index:100}}
+
+/* ── Sidebar ── */
+.sidebar{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.sidebar-top{padding:18px 16px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-mark{width:30px;height:30px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.logo-name{font-family:var(--font-serif);font-size:19px;letter-spacing:-0.3px}
+.logo-tag{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-top:1px;margin-left:40px}
+
+/* New chat btn */
+.new-chat-btn{display:flex;align-items:center;gap:8px;width:100%;margin-top:12px;padding:8px 12px;background:var(--accent-bg);border:1px solid rgba(200,169,110,0.2);border-radius:var(--radius);color:var(--accent);font-size:13px;font-family:var(--font-sans);cursor:pointer;transition:all 0.15s}
+.new-chat-btn:hover{background:rgba(200,169,110,0.14);border-color:rgba(200,169,110,0.35)}
+
+/* Sessions list */
+.sessions-section{flex-shrink:0;border-bottom:1px solid var(--border)}
+.section-label{padding:10px 16px 6px;font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:1px}
+.sessions-list{max-height:160px;overflow-y:auto;padding:0 8px 8px}
+.session-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--radius);cursor:pointer;transition:background 0.1s;margin-bottom:2px}
+.session-item:hover{background:var(--surface2)}
+.session-item.active{background:var(--surface3);border:1px solid var(--border2)}
+.session-icon{font-size:12px;flex-shrink:0;opacity:0.6}
+.session-title{flex:1;min-width:0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.session-item.active .session-title{color:var(--accent)}
+.session-turns{font-size:10px;color:var(--muted);flex-shrink:0;font-family:var(--font-mono)}
+.session-del{background:none;border:none;color:var(--muted2);cursor:pointer;font-size:12px;padding:2px 4px;border-radius:4px;opacity:0;transition:opacity 0.1s}
+.session-item:hover .session-del{opacity:1}
+.session-del:hover{color:var(--red)}
+
+/* Docs section */
+.docs-section{flex:1;overflow-y:auto;padding:0 8px 8px}
+.upload-zone{margin:8px;border:1.5px dashed var(--border2);border-radius:var(--radius);padding:14px;text-align:center;cursor:pointer;transition:all 0.2s}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:var(--accent-bg)}
+.upload-zone input{display:none}
+.uz-title{font-size:12px;font-weight:500;color:var(--accent);margin-bottom:3px}
+.uz-sub{font-size:11px;color:var(--muted)}
+.ns-row{display:flex;align-items:center;gap:6px;margin:6px 8px 4px}
+.ns-row label{font-size:11px;color:var(--muted);white-space:nowrap}
+.ns-row input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text);font-family:var(--font-mono);outline:none}
+.ns-row input:focus{border-color:var(--accent)}
+
+.doc-item{display:flex;align-items:flex-start;gap:8px;padding:9px 10px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);margin-bottom:6px;animation:fadeUp 0.2s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.doc-icon{width:28px;height:28px;border-radius:6px;background:rgba(200,169,110,0.12);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.doc-info{flex:1;min-width:0}
+.doc-name{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.doc-meta{font-size:10px;color:var(--muted);margin-top:2px}
+.doc-progress{height:2px;background:var(--border);border-radius:1px;margin-top:5px;overflow:hidden}
+.doc-progress-bar{height:100%;background:var(--accent);border-radius:1px;animation:indeterminate 1.2s infinite linear;width:40%;position:relative}
+@keyframes indeterminate{0%{left:-40%;width:40%}100%{left:100%;width:40%}}
+.badge{display:inline-block;font-size:10px;padding:2px 6px;border-radius:20px;margin-top:3px}
+.badge.ready{background:var(--green-bg);color:var(--green)}
+.badge.indexing{background:var(--accent-bg);color:var(--accent)}
+.badge.error{background:var(--red-bg);color:var(--red)}
+.badge.table{background:var(--blue-bg);color:var(--blue);margin-left:4px}
+.doc-rm{background:none;border:none;color:var(--muted2);cursor:pointer;font-size:12px;padding:2px;border-radius:3px;flex-shrink:0;margin-top:2px}
+.doc-rm:hover{color:var(--red)}
+
+/* Status */
+.status-bar{padding:8px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:7px;flex-shrink:0}
+.sdot{width:6px;height:6px;border-radius:50%;background:var(--muted2);flex-shrink:0;transition:background 0.3s}
+.sdot.ok{background:var(--green);box-shadow:0 0 5px rgba(76,175,125,0.4)}
+.sdot.err{background:var(--red)}
+.stext{font-size:10px;color:var(--muted);font-family:var(--font-mono)}
+
+/* ── Main ── */
+.main{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+
+/* Header */
+.chat-header{padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.mobile-menu{display:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;padding:4px}
+@media(max-width:700px){.mobile-menu{display:block}}
+.chat-header-info{flex:1;min-width:0}
+.chat-session-title{font-family:var(--font-serif);font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-session-sub{font-size:11px;color:var(--muted);margin-top:1px}
+.header-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.hdr-btn{background:none;border:1px solid var(--border2);border-radius:var(--radius);padding:6px 12px;font-size:12px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:5px;transition:all 0.15s;font-family:var(--font-sans)}
+.hdr-btn:hover{border-color:var(--border3);color:var(--text)}
+.top-k-select{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 8px;font-size:12px;outline:none;cursor:pointer}
+.theme-btn{width:30px;height:30px;border-radius:var(--radius);background:none;border:1px solid var(--border2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;transition:all 0.15s}
+.theme-btn:hover{border-color:var(--border3)}
+
+/* Messages */
+.messages{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:18px}
+
+/* Welcome */
+.welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:40px 20px;color:var(--muted)}
+.welcome-glyph{font-size:44px;opacity:0.3}
+.welcome h2{font-family:var(--font-serif);font-size:24px;color:var(--text);opacity:0.55;font-weight:400}
+.welcome p{font-size:13px;max-width:340px;line-height:1.65}
+.chip-grid{display:flex;flex-wrap:wrap;justify-content:center;gap:7px;margin-top:6px;max-width:500px}
+.chip{font-size:12px;padding:6px 14px;border:1px solid var(--border2);border-radius:20px;background:var(--surface2);color:var(--muted);cursor:pointer;transition:all 0.15s}
+.chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+
+/* Messages */
+.msg{display:flex;gap:10px;animation:msgIn 0.18s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.msg.user{flex-direction:row-reverse}
+.avatar{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;margin-top:2px}
+.avatar.ai{background:rgba(200,169,110,0.12);color:var(--accent);font-family:var(--font-serif);font-size:15px}
+.avatar.user{background:var(--blue-bg);color:var(--blue);font-size:11px;font-weight:500}
+.msg-body{max-width:74%;display:flex;flex-direction:column;gap:7px}
+.msg.user .msg-body{align-items:flex-end}
+.bubble{padding:11px 15px;border-radius:12px;line-height:1.7;font-size:13.5px;white-space:pre-wrap;word-break:break-word}
+.msg.ai .bubble{background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:3px}
+.msg.user .bubble{background:var(--blue-bg);border:1px solid rgba(107,159,212,0.18);border-bottom-right-radius:3px}
+.bubble.thinking{color:var(--muted);font-style:italic}
+.cursor{display:inline-block;width:2px;height:13px;background:var(--accent);margin-left:2px;vertical-align:middle;animation:blink 0.75s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* Table rendering inside bubble */
+.bubble table{border-collapse:collapse;font-size:12px;margin:8px 0;font-family:var(--font-mono);max-width:100%;overflow-x:auto;display:block}
+.bubble table th,.bubble table td{border:1px solid var(--border2);padding:4px 10px;text-align:left;white-space:nowrap}
+.bubble table th{background:var(--surface3);color:var(--accent);font-weight:500}
+
+/* Message actions */
+.msg-actions{display:flex;align-items:center;gap:5px;opacity:0;transition:opacity 0.15s}
+.msg-body:hover .msg-actions{opacity:1}
+.msg-act-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:3px 7px;border-radius:5px;display:flex;align-items:center;gap:4px;transition:all 0.1s;font-family:var(--font-sans)}
+.msg-act-btn:hover{background:var(--surface2);color:var(--text)}
+.msg-act-btn.copied{color:var(--green)}
+
+/* Sources */
+.sources-panel{display:flex;flex-direction:column;gap:4px}
+.src-toggle{background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;display:flex;align-items:center;gap:5px;padding:2px 0;transition:color 0.15s;font-family:var(--font-sans)}
+.src-toggle:hover{color:var(--accent)}
+.src-arrow{transition:transform 0.2s;display:inline-block;font-size:9px}
+.src-toggle.open .src-arrow{transform:rotate(90deg)}
+.src-list{display:none;flex-direction:column;gap:4px;margin-top:3px}
+.src-list.open{display:flex}
+.src-chip{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 11px;font-size:11px}
+.src-chip-icon{font-size:11px;opacity:0.7}
+.src-chip-info{flex:1;min-width:0}
+.src-chip-name{color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.src-chip-meta{color:var(--muted);margin-top:1px;font-family:var(--font-mono)}
+.src-chip-score{font-family:var(--font-mono);font-size:10px;color:var(--accent);background:var(--accent-bg);padding:2px 6px;border-radius:4px;flex-shrink:0}
+.src-chip-type{font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px}
+.src-chip-type.table{background:var(--blue-bg);color:var(--blue)}
+
+/* Export modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:24px;width:360px;animation:modalIn 0.2s ease}
+@keyframes modalIn{from{opacity:0;transform:scale(0.96)}to{opacity:1;transform:none}}
+.modal h3{font-family:var(--font-serif);font-size:18px;margin-bottom:16px}
+.modal-actions{display:flex;gap:8px;flex-direction:column}
+.modal-btn{padding:10px 16px;border-radius:var(--radius);border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:13px;cursor:pointer;text-align:left;display:flex;align-items:center;gap:10px;transition:all 0.15s;font-family:var(--font-sans)}
+.modal-btn:hover{border-color:var(--border3);background:var(--surface3)}
+.modal-btn .btn-icon{font-size:16px;width:24px;text-align:center}
+.modal-close{margin-top:14px;width:100%;padding:8px;background:none;border:1px solid var(--border);border-radius:var(--radius);color:var(--muted);cursor:pointer;font-size:12px;font-family:var(--font-sans)}
+.modal-close:hover{border-color:var(--border2);color:var(--text)}
+
+/* Input */
+.input-area{padding:12px 24px 16px;border-top:1px solid var(--border);flex-shrink:0}
+.input-wrap{display:flex;align-items:flex-end;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:9px 10px;transition:border-color 0.2s}
+.input-wrap:focus-within{border-color:rgba(200,169,110,0.4)}
+#questionInput{flex:1;background:none;border:none;outline:none;color:var(--text);font-family:var(--font-sans);font-size:14px;line-height:1.5;resize:none;min-height:22px;max-height:120px}
+#questionInput::placeholder{color:var(--muted2)}
+#questionInput:disabled{opacity:0.5}
+.send-btn{width:34px;height:34px;border-radius:8px;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s}
+.send-btn:hover{background:var(--accent2)}
+.send-btn:disabled{background:var(--border2);cursor:not-allowed;opacity:0.4}
+.send-btn svg{width:15px;height:15px;fill:var(--bg)}
+.input-footer{display:flex;align-items:center;justify-content:space-between;margin-top:7px}
+.input-hint{font-size:11px;color:var(--muted2)}
+.stream-indicator{font-size:11px;color:var(--accent);display:none;align-items:center;gap:5px}
+.stream-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.7)}}
+
+/* Light theme */
+body.light{
+  --bg:#f5f4f0;--surface:#ffffff;--surface2:#f0ede8;--surface3:#e8e4dc;
+  --border:#e0dbd0;--border2:#ccc7ba;--border3:#b8b2a0;
+  --text:#1a1a1a;--muted:#7a7060;--muted2:#a09880;
+  --accent:#8b6820;--accent2:#a07830;--accent-bg:rgba(139,104,32,0.08);
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+<!-- ── Sidebar ── -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <div class="logo">
+      <div class="logo-mark">📚</div>
+      <span class="logo-name">Docwise</span>
+    </div>
+    <div class="logo-tag">RAG PDF Assistant</div>
+    <button class="new-chat-btn" onclick="newChat()">＋ &nbsp;New chat</button>
+  </div>
+
+  <div class="sessions-section">
+    <div class="section-label">Conversations</div>
+    <div class="sessions-list" id="sessionsList">
+      <div style="padding:6px 10px;font-size:11px;color:var(--muted2)">No chats yet</div>
+    </div>
+  </div>
+
+  <div class="docs-section">
+    <div class="section-label" style="padding-top:10px">Documents</div>
+    <div class="upload-zone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+      <div class="uz-title">＋ Upload PDF</div>
+      <div class="uz-sub">drag & drop or click</div>
+      <input type="file" id="fileInput" accept=".pdf" multiple onchange="handleFiles(this.files)">
+    </div>
+    <div class="ns-row">
+      <label>ns</label>
+      <input type="text" id="nsInput" value="default" placeholder="default">
+    </div>
+    <div id="docsList"></div>
+  </div>
+
+  <div class="status-bar">
+    <div class="sdot" id="sdot"></div>
+    <span class="stext" id="stext">checking…</span>
+  </div>
+</aside>
+
+<!-- ── Main ── -->
+<main class="main">
+  <div class="chat-header">
+    <button class="mobile-menu" onclick="toggleSidebar()">☰</button>
+    <div class="chat-header-info">
+      <div class="chat-session-title" id="chatTitle">New chat</div>
+      <div class="chat-session-sub" id="chatSub">Upload a PDF to begin</div>
+    </div>
+    <div class="header-actions">
+      <select class="top-k-select" id="topKSelect" title="Sources to retrieve">
+        <option value="3">3 sources</option>
+        <option value="5" selected>5 sources</option>
+        <option value="8">8 sources</option>
+        <option value="10">10 sources</option>
+      </select>
+      <button class="hdr-btn" onclick="openExportModal()" title="Export chat">⬇ Export</button>
+      <button class="hdr-btn" onclick="clearCurrentChat()" title="Clear chat">↺ Clear</button>
+      <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+    </div>
+  </div>
+
+  <div class="messages" id="messages">
+    <div class="welcome" id="welcomeScreen">
+      <div class="welcome-glyph">◈</div>
+      <h2>Ask your documents anything</h2>
+      <p>Upload PDFs on the left, then ask questions. I'll find the answer from your documents with source citations.</p>
+      <div class="chip-grid">
+        <span class="chip" onclick="useChip(this)">Summarize this document</span>
+        <span class="chip" onclick="useChip(this)">What are the key findings?</span>
+        <span class="chip" onclick="useChip(this)">List all important dates</span>
+        <span class="chip" onclick="useChip(this)">Who are the key people mentioned?</span>
+        <span class="chip" onclick="useChip(this)">What tables are in this document?</span>
+        <span class="chip" onclick="useChip(this)">Compare the main topics</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="input-area">
+    <div class="input-wrap">
+      <textarea id="questionInput" rows="1" placeholder="Ask a question… (follow-ups work too)"
+        onkeydown="handleKey(event)" oninput="autoResize(this)" disabled></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendQuestion()" disabled>
+        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      </button>
+    </div>
+    <div class="input-footer">
+      <span class="input-hint">Enter to send · Shift+Enter for newline</span>
+      <span class="stream-indicator" id="streamIndicator"><span class="stream-dot"></span>Generating…</span>
+    </div>
+  </div>
+</main>
+</div>
+
+<!-- Export modal -->
+<div class="modal-overlay" id="exportModal" onclick="closeExportModal(event)">
+  <div class="modal">
+    <h3>Export conversation</h3>
+    <div class="modal-actions">
+      <button class="modal-btn" onclick="exportMarkdown()">
+        <span class="btn-icon">📝</span>
+        <div><div style="font-weight:500">Markdown (.md)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Full chat with sources</div></div>
+      </button>
+      <button class="modal-btn" onclick="exportJSON()">
+        <span class="btn-icon">{ }</span>
+        <div><div style="font-weight:500">JSON</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Raw session data</div></div>
+      </button>
+      <button class="modal-btn" onclick="exportText()">
+        <span class="btn-icon">📄</span>
+        <div><div style="font-weight:500">Plain text (.txt)</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Simple Q&A format</div></div>
+      </button>
+    </div>
+    <button class="modal-close" onclick="closeExportModal()">Cancel</button>
+  </div>
+</div>
+
+<script>
+const API = 'http://127.0.0.1:8000';
+const docs = [];
+let sessions = [];
+let activeSessionId = null;
+let isLoading = false;
+let isDark = true;
+
+// ── Persist to localStorage ──
+function saveLocal() {
+  try {
+    localStorage.setItem('docwise_sessions', JSON.stringify(sessions));
+    localStorage.setItem('docwise_active', activeSessionId || '');
+    localStorage.setItem('docwise_theme', isDark ? 'dark' : 'light');
+  } catch {}
+}
+
+function loadLocal() {
+  try {
+    const s = localStorage.getItem('docwise_sessions');
+    if (s) sessions = JSON.parse(s);
+    const a = localStorage.getItem('docwise_active');
+    if (a) activeSessionId = a;
+    const t = localStorage.getItem('docwise_theme');
+    if (t === 'light') { isDark = false; document.body.classList.add('light'); document.getElementById('themeBtn').textContent = '☀️'; }
+  } catch {}
+}
+
+// ── Theme ──
+function toggleTheme() {
+  isDark = !isDark;
+  document.body.classList.toggle('light', !isDark);
+  document.getElementById('themeBtn').textContent = isDark ? '🌙' : '☀️';
+  saveLocal();
+}
+
+// ── Health ──
+async function checkHealth() {
+  try {
+    const r = await fetch(`${API}/health`);
+    const d = await r.json();
+    const ok = d.ollama === 'ok' && d.pinecone === 'ok';
+    document.getElementById('sdot').className = 'sdot ' + (ok ? 'ok' : 'err');
+    document.getElementById('stext').textContent = ok ? 'ollama ✓  pinecone ✓' : `ollama:${d.ollama}  pinecone:${d.pinecone}`;
+  } catch {
+    document.getElementById('sdot').className = 'sdot err';
+    document.getElementById('stext').textContent = 'server unreachable';
+  }
+}
+
+// ── Sessions ──
+function getActiveSession() { return sessions.find(s => s.id === activeSessionId) || null; }
+
+async function newChat() {
+  const ns = document.getElementById('nsInput').value.trim() || 'default';
+  try {
+    const r = await fetch(`${API}/api/sessions`, { method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ namespace: ns, title: 'New chat' }) });
+    const session = await r.json();
+    session.turns = [];
+    sessions.unshift(session);
+    activeSessionId = session.id;
+    saveLocal();
+    renderSessions();
+    renderMessages();
+    updateChatHeader();
+  } catch {
+    // fallback: local-only session
+    const session = { id: 'local-' + Date.now(), title: 'New chat', namespace: ns, turn_count: 0,
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(), turns: [] };
+    sessions.unshift(session);
+    activeSessionId = session.id;
+    saveLocal();
+    renderSessions();
+    renderMessages();
+    updateChatHeader();
+  }
+}
+
+function switchSession(id) {
+  activeSessionId = id;
+  saveLocal();
+  renderSessions();
+  renderMessages();
+  updateChatHeader();
+  document.getElementById('sidebar').classList.remove('open');
+}
+
+async function deleteSession(id, e) {
+  e.stopPropagation();
+  try { await fetch(`${API}/api/sessions/${id}`, { method: 'DELETE' }); } catch {}
+  sessions = sessions.filter(s => s.id !== id);
+  if (activeSessionId === id) { activeSessionId = sessions[0]?.id || null; }
+  saveLocal();
+  renderSessions();
+  renderMessages();
+  updateChatHeader();
+}
+
+async function clearCurrentChat() {
+  const session = getActiveSession();
+  if (!session) return;
+  try { await fetch(`${API}/api/sessions/${session.id}/clear`, { method: 'POST' }); } catch {}
+  session.turns = [];
+  session.title = 'New chat';
+  session.turn_count = 0;
+  saveLocal();
+  renderSessions();
+  renderMessages();
+  updateChatHeader();
+}
+
+function renderSessions() {
+  const el = document.getElementById('sessionsList');
+  if (!sessions.length) {
+    el.innerHTML = '<div style="padding:6px 10px;font-size:11px;color:var(--muted2)">No chats yet</div>';
+    return;
+  }
+  el.innerHTML = sessions.map(s => `
+    <div class="session-item${s.id === activeSessionId ? ' active' : ''}" onclick="switchSession('${s.id}')">
+      <span class="session-icon">💬</span>
+      <span class="session-title" title="${s.title}">${s.title}</span>
+      <span class="session-turns">${(s.turns||[]).length}</span>
+      <button class="session-del" onclick="deleteSession('${s.id}',event)" title="Delete">✕</button>
+    </div>`).join('');
+}
+
+function updateChatHeader() {
+  const session = getActiveSession();
+  document.getElementById('chatTitle').textContent = session?.title || 'New chat';
+  const readyDocs = docs.filter(d => d.status === 'ready').length;
+  document.getElementById('chatSub').textContent = readyDocs > 0
+    ? `${readyDocs} doc${readyDocs > 1 ? 's' : ''} · ${session?.namespace || 'default'} namespace`
+    : 'Upload a PDF to begin';
+}
+
+// ── Render messages from session ──
+function renderMessages() {
+  const container = document.getElementById('messages');
+  const session = getActiveSession();
+  if (!session || !session.turns || session.turns.length === 0) {
+    container.innerHTML = `<div class="welcome" id="welcomeScreen">
+      <div class="welcome-glyph">◈</div>
+      <h2>Ask your documents anything</h2>
+      <p>Upload PDFs on the left, then ask questions. Follow-up questions work too — I remember our conversation.</p>
+      <div class="chip-grid">
+        <span class="chip" onclick="useChip(this)">Summarize this document</span>
+        <span class="chip" onclick="useChip(this)">What are the key findings?</span>
+        <span class="chip" onclick="useChip(this)">List all important dates</span>
+        <span class="chip" onclick="useChip(this)">Who are the key people mentioned?</span>
+        <span class="chip" onclick="useChip(this)">What tables are in this document?</span>
+        <span class="chip" onclick="useChip(this)">Compare the main topics</span>
+      </div></div>`;
+    return;
+  }
+  container.innerHTML = '';
+  for (const turn of session.turns) {
+    const msgId = 'h-' + Math.random().toString(36).slice(2);
+    if (turn.role === 'user') {
+      addBubble('user', turn.content, msgId, false);
+    } else {
+      const msgEl = addBubble('ai', turn.content, msgId, false);
+      if (turn.sources && turn.sources.length) {
+        appendSources(msgId, turn.sources);
+      }
+    }
+  }
+  container.scrollTop = container.scrollHeight;
+}
+
+// ── Files ──
+function handleFiles(files) {
+  Array.from(files).forEach(f => { if (f.type === 'application/pdf') uploadFile(f); });
+}
+
+async function uploadFile(file) {
+  const id = crypto.randomUUID();
+  const ns = document.getElementById('nsInput').value.trim() || 'default';
+  const doc = { id, name: file.name, size: file.size, status: 'indexing', namespace: ns };
+  docs.push(doc);
+  renderDocs();
+
+  const form = new FormData();
+  form.append('file', file);
+  form.append('namespace', ns);
+
+  try {
+    const r = await fetch(`${API}/api/ingest/upload`, { method: 'POST', body: form });
+    if (!r.ok) throw new Error((await r.json()).detail || 'Upload failed');
+    const data = await r.json();
+    doc.status = 'ready';
+    doc.chunks = data.chunks_indexed;
+    doc.pages = data.pages;
+    doc.tables = data.table_count || 0;
+    doc.doc_id = data.doc_id;
+  } catch (e) {
+    doc.status = 'error';
+    doc.error = e.message;
+  }
+  renderDocs();
+  updateChatState();
+  updateChatHeader();
+}
+
+function renderDocs() {
+  const el = document.getElementById('docsList');
+  if (!docs.length) { el.innerHTML = ''; return; }
+  el.innerHTML = docs.map(d => `
+    <div class="doc-item">
+      <div class="doc-icon">📄</div>
+      <div class="doc-info">
+        <div class="doc-name" title="${d.name}">${d.name}</div>
+        <div class="doc-meta">${(d.size/1024).toFixed(0)}KB · ${d.namespace}</div>
+        ${d.status === 'indexing' ? `<div class="doc-progress"><div class="doc-progress-bar"></div></div>` :
+          d.status === 'ready' ? `<span class="badge ready">✓ ${d.chunks} chunks · ${d.pages}p</span>${d.tables > 0 ? `<span class="badge table">⊞ ${d.tables} tables</span>` : ''}` :
+          `<span class="badge error">✗ ${d.error||'error'}</span>`}
+      </div>
+      <button class="doc-rm" onclick="removeDoc('${d.id}')">✕</button>
+    </div>`).join('');
+}
+
+async function removeDoc(id) {
+  const doc = docs.find(d => d.id === id);
+  if (!doc) return;
+  if (doc.doc_id) {
+    try { await fetch(`${API}/api/ingest/delete/${doc.doc_id}?namespace=${doc.namespace}`, { method: 'DELETE' }); } catch {}
+  }
+  docs.splice(docs.findIndex(d => d.id === id), 1);
+  renderDocs();
+  updateChatState();
+}
+
+function updateChatState() {
+  const ready = docs.filter(d => d.status === 'ready').length;
+  document.getElementById('questionInput').disabled = ready === 0 || isLoading;
+  document.getElementById('sendBtn').disabled = ready === 0 || isLoading;
+}
+
+// drag-drop
+const dz = document.getElementById('dropzone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag'); handleFiles(e.dataTransfer.files); });
+
+// mobile sidebar
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
+
+// ── Chat ──
+function useChip(el) { document.getElementById('questionInput').value = el.textContent; sendQuestion(); }
+function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuestion(); } }
+function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'; }
+
+function hideWelcome() { const w = document.getElementById('welcomeScreen'); if (w) w.remove(); }
+
+function addBubble(role, text, id, animated = true) {
+  hideWelcome();
+  const container = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  if (id) div.id = id;
+  if (animated) div.style.animation = 'msgIn 0.18s ease';
+  const initials = role === 'ai' ? '◈' : 'You';
+  div.innerHTML = `
+    <div class="avatar ${role}">${initials}</div>
+    <div class="msg-body">
+      <div class="bubble${text === '…' ? ' thinking' : ''}" id="${id ? id+'-b' : ''}">${
+        text === '…' ? '<span class="cursor"></span>' : renderText(text)
+      }</div>
+      ${role === 'ai' ? `<div class="msg-actions">
+        <button class="msg-act-btn" onclick="copyMsg('${id}',this)" title="Copy">⎘ Copy</button>
+      </div>` : ''}
+    </div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function renderText(text) {
+  // Convert markdown-style tables to HTML tables
+  const lines = text.split('\n');
+  let result = '', inTable = false, tableHTML = '';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith('|') && line.endsWith('|')) {
+      if (!inTable) { inTable = true; tableHTML = '<table>'; }
+      const cells = line.split('|').slice(1,-1).map(c => c.trim());
+      // Check if separator row
+      if (cells.every(c => /^[-:]+$/.test(c))) {
+        tableHTML = tableHTML.replace(/<tr>([^]*?)<\/tr>\s*$/, '<tr>$1</tr>').replace(/<td>/g,'<th>').replace(/<\/td>/g,'</th>');
+        continue;
+      }
+      const tag = tableHTML === '<table>' ? 'th' : 'td';
+      tableHTML += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+    } else {
+      if (inTable) { result += tableHTML + '</table>\n'; tableHTML = ''; inTable = false; }
+      result += line + '\n';
+    }
+  }
+  if (inTable) result += tableHTML + '</table>\n';
+
+  return result.trim().replace(/\n/g, '<br>');
+}
+
+async function copyMsg(msgId, btn) {
+  const bubble = document.getElementById(msgId + '-b');
+  if (!bubble) return;
+  const text = bubble.innerText;
+  await navigator.clipboard.writeText(text);
+  btn.textContent = '✓ Copied';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 2000);
+}
+
+function appendSources(msgId, sources) {
+  const msgEl = document.getElementById(msgId);
+  if (!msgEl) return;
+  const body = msgEl.querySelector('.msg-body');
+  if (!body || body.querySelector('.sources-panel')) return;
+  const uid = 'src-' + msgId;
+  const panel = document.createElement('div');
+  panel.className = 'sources-panel';
+  panel.innerHTML = `
+    <button class="src-toggle" onclick="toggleSrc('${uid}',this)">
+      <span class="src-arrow">▶</span> ${sources.length} source${sources.length>1?'s':''} retrieved
+    </button>
+    <div class="src-list" id="${uid}">
+      ${sources.map(s => `<div class="src-chip">
+        <span class="src-chip-icon">${s.chunk_type === 'table' ? '⊞' : '📄'}</span>
+        <div class="src-chip-info">
+          <div class="src-chip-name">${s.filename}</div>
+          <div class="src-chip-meta">Page ${s.page}${s.chunk_type === 'table' ? ' <span class="src-chip-type table">table</span>' : ''}</div>
+        </div>
+        <span class="src-chip-score">${((s.score||0)*100).toFixed(0)}%</span>
+      </div>`).join('')}
+    </div>`;
+  body.insertBefore(panel, body.querySelector('.msg-actions'));
+}
+
+function toggleSrc(id, btn) {
+  document.getElementById(id).classList.toggle('open');
+  btn.classList.toggle('open');
+}
+
+// ── Send ──
+async function sendQuestion() {
+  if (isLoading) return;
+  const input = document.getElementById('questionInput');
+  const q = input.value.trim();
+  if (!q || !docs.some(d => d.status === 'ready')) return;
+
+  // Ensure we have an active session
+  if (!activeSessionId) await newChat();
+
+  input.value = '';
+  input.style.height = 'auto';
+  isLoading = true;
+  updateChatState();
+  document.getElementById('streamIndicator').style.display = 'flex';
+
+  addBubble('user', q);
+  const msgId = 'msg-' + Date.now();
+  addBubble('ai', '…', msgId);
+  const bubble = document.getElementById(msgId + '-b');
+
+  const session = getActiveSession();
+  const ns = session?.namespace || document.getElementById('nsInput').value.trim() || 'default';
+  const topK = parseInt(document.getElementById('topKSelect').value);
+
+  let fullText = '', sourcesData = null;
+
+  try {
+    const resp = await fetch(`${API}/api/query/ask/stream`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ question: q, namespace: ns, top_k: topK, temperature: 0.1,
+                             session_id: activeSessionId }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', event = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) { event = line.slice(7).trim(); continue; }
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6).trim());
+            if (event === 'session' && data.session_id) {
+              // Update session id if server assigned one
+              activeSessionId = data.session_id;
+            } else if (event === 'sources') {
+              sourcesData = data;
+            } else if (event === 'token') {
+              fullText += data.text;
+              bubble.innerHTML = renderText(fullText) + '<span class="cursor"></span>';
+              document.getElementById('messages').scrollTop = 9999;
+            } else if (event === 'done') {
+              bubble.innerHTML = renderText(fullText);
+              if (sourcesData) appendSources(msgId, sourcesData);
+              // Save turn to local session
+              if (session) {
+                if (!session.turns) session.turns = [];
+                session.turns.push({ role: 'user', content: q, sources: [], timestamp: new Date().toISOString() });
+                session.turns.push({ role: 'assistant', content: fullText, sources: sourcesData || [], timestamp: new Date().toISOString() });
+                session.turn_count = session.turns.length;
+                if (session.title === 'New chat') session.title = q.slice(0, 50) + (q.length > 50 ? '…' : '');
+                session.updated_at = new Date().toISOString();
+                saveLocal();
+                renderSessions();
+                updateChatHeader();
+              }
+            } else if (event === 'error') {
+              bubble.innerHTML = `<span style="color:var(--red)">⚠ ${data.message}</span>`;
+            }
+          } catch {}
+          event = null;
+        }
+      }
+    }
+  } catch (e) {
+    bubble.innerHTML = `<span style="color:var(--red)">Connection error: ${e.message}</span>`;
+  }
+
+  isLoading = false;
+  updateChatState();
+  document.getElementById('streamIndicator').style.display = 'none';
+  document.getElementById('questionInput').focus();
+}
+
+// ── Export ──
+function openExportModal() { document.getElementById('exportModal').classList.add('open'); }
+function closeExportModal(e) {
+  if (!e || e.target === document.getElementById('exportModal')) {
+    document.getElementById('exportModal').classList.remove('open');
+  }
+}
+
+function getExportData() {
+  const session = getActiveSession();
+  if (!session || !session.turns) return { session, turns: [] };
+  return { session, turns: session.turns };
+}
+
+function downloadFile(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  closeExportModal();
+}
+
+function exportMarkdown() {
+  const { session, turns } = getExportData();
+  const title = session?.title || 'Chat export';
+  let md = `# ${title}\n\n_Exported from Docwise · ${new Date().toLocaleString()}_\n\n---\n\n`;
+  for (const t of turns) {
+    if (t.role === 'user') md += `**You:** ${t.content}\n\n`;
+    else {
+      md += `**Assistant:** ${t.content}\n\n`;
+      if (t.sources?.length) {
+        md += `> Sources: ${t.sources.map(s => `${s.filename} p.${s.page}`).join(', ')}\n\n`;
+      }
+    }
+  }
+  downloadFile(md, `docwise-${Date.now()}.md`, 'text/markdown');
+}
+
+function exportJSON() {
+  const { session, turns } = getExportData();
+  downloadFile(JSON.stringify({ session, turns }, null, 2), `docwise-${Date.now()}.json`, 'application/json');
+}
+
+function exportText() {
+  const { session, turns } = getExportData();
+  let txt = `${session?.title || 'Chat export'}\n${'='.repeat(40)}\n\n`;
+  for (const t of turns) {
+    if (t.role === 'user') txt += `Q: ${t.content}\n\n`;
+    else txt += `A: ${t.content}\n\n---\n\n`;
+  }
+  downloadFile(txt, `docwise-${Date.now()}.txt`, 'text/plain');
+}
+
+// ── Init ──
+loadLocal();
+checkHealth();
+setInterval(checkHealth, 30000);
+
+// Restore sessions from server
+(async () => {
+  try {
+    const r = await fetch(`${API}/api/sessions`);
+    const serverSessions = await r.json();
+    // Merge server sessions with local
+    for (const ss of serverSessions) {
+      if (!sessions.find(s => s.id === ss.id)) {
+        sessions.push({ ...ss, turns: [] });
+      }
+    }
+  } catch {}
+  renderSessions();
+  if (activeSessionId && sessions.find(s => s.id === activeSessionId)) {
+    renderMessages();
+    updateChatHeader();
+  } else if (sessions.length > 0) {
+    activeSessionId = sessions[0].id;
+    renderMessages();
+    updateChatHeader();
+  }
+})();
+</script>
+</body>
+</html>
