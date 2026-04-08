@@ -1,23 +1,30 @@
 """
-In-memory conversation store with optional summarization.
-Each session has an ID, a list of turns, and a namespace it belongs to.
+SQLite-backed conversation store.
+Replaces the previous in-process MemoryStore — sessions and turns now
+survive server restarts.
 """
 import uuid
+import json
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.core.database import get_connection
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 @dataclass
 class Turn:
-    role: str           # "user" | "assistant"
+    role: str
     content: str
     sources: list = field(default_factory=list)
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=_now)
 
 
 @dataclass
@@ -26,18 +33,18 @@ class Session:
     title: str
     namespace: str
     turns: list[Turn] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=_now)
+    updated_at: str = field(default_factory=_now)
 
     def add_turn(self, role: str, content: str, sources: list = None):
-        self.turns.append(Turn(role=role, content=content, sources=sources or []))
-        self.updated_at = datetime.now(timezone.utc).isoformat()
-        # Auto-title from first user message
+        turn = Turn(role=role, content=content, sources=sources or [])
+        self.turns.append(turn)
+        self.updated_at = _now()
         if role == "user" and self.title == "New chat":
-            self.title = content[:50] + ("…" if len(content) > 50 else "")
+            self.title = content[:50] + ("..." if len(content) > 50 else "")
+        return turn
 
     def get_history_text(self, max_turns: int = 6) -> str:
-        """Return last N turns formatted for injection into the RAG prompt."""
         recent = self.turns[-(max_turns * 2):]
         lines = []
         for t in recent:
@@ -57,49 +64,103 @@ class Session:
 
 
 class MemoryStore:
-    """Simple in-process session store. Sessions live for the server's lifetime."""
-
-    def __init__(self):
-        self._sessions: dict[str, Session] = {}
+    """SQLite-backed session store. All data persists across server restarts."""
 
     def create_session(self, namespace: str = "default", title: str = "New chat") -> Session:
         session_id = str(uuid.uuid4())
-        session = Session(id=session_id, title=title, namespace=namespace)
-        self._sessions[session_id] = session
+        now = _now()
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO sessions (id, title, namespace, created_at, updated_at) VALUES (?,?,?,?,?)",
+            (session_id, title, namespace, now, now),
+        )
+        conn.commit()
         logger.info("session_created", session_id=session_id, namespace=namespace)
-        return session
+        return Session(id=session_id, title=title, namespace=namespace,
+                       created_at=now, updated_at=now)
 
     def get_session(self, session_id: str) -> Optional[Session]:
-        return self._sessions.get(session_id)
+        conn = get_connection()
+        row = conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+        if not row:
+            return None
+        session = Session(
+            id=row["id"], title=row["title"], namespace=row["namespace"],
+            created_at=row["created_at"], updated_at=row["updated_at"],
+        )
+        session.turns = self._load_turns(session_id)
+        return session
 
     def get_or_create(self, session_id: Optional[str], namespace: str) -> Session:
-        if session_id and session_id in self._sessions:
-            return self._sessions[session_id]
+        if session_id:
+            session = self.get_session(session_id)
+            if session:
+                return session
         return self.create_session(namespace=namespace)
 
     def list_sessions(self) -> list[dict]:
-        return sorted(
-            [s.to_dict() for s in self._sessions.values()],
-            key=lambda s: s["updated_at"],
-            reverse=True,
+        conn = get_connection()
+        rows = conn.execute("""
+            SELECT s.*, COUNT(t.id) as turn_count
+            FROM sessions s
+            LEFT JOIN turns t ON t.session_id = s.id
+            GROUP BY s.id
+            ORDER BY s.updated_at DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_turn(self, session_id: str, role: str, content: str, sources: list) -> None:
+        """Persist a single turn and update the session title + updated_at."""
+        conn = get_connection()
+        now = _now()
+        conn.execute(
+            "INSERT INTO turns (session_id, role, content, sources, timestamp) VALUES (?,?,?,?,?)",
+            (session_id, role, content, json.dumps(sources), now),
         )
+        conn.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now, session_id))
+        if role == "user":
+            title_row = conn.execute(
+                "SELECT title FROM sessions WHERE id=?", (session_id,)
+            ).fetchone()
+            if title_row and title_row["title"] == "New chat":
+                new_title = content[:50] + ("..." if len(content) > 50 else "")
+                conn.execute("UPDATE sessions SET title=? WHERE id=?", (new_title, session_id))
+        conn.commit()
 
     def delete_session(self, session_id: str) -> bool:
-        if session_id in self._sessions:
-            del self._sessions[session_id]
-            return True
-        return False
+        conn = get_connection()
+        affected = conn.execute("DELETE FROM sessions WHERE id=?", (session_id,)).rowcount
+        conn.commit()
+        return affected > 0
 
     def clear_session(self, session_id: str) -> bool:
-        session = self._sessions.get(session_id)
-        if session:
-            session.turns = []
-            session.title = "New chat"
-            return True
-        return False
+        conn = get_connection()
+        conn.execute("DELETE FROM turns WHERE session_id=?", (session_id,))
+        conn.execute(
+            "UPDATE sessions SET title='New chat', updated_at=? WHERE id=?",
+            (_now(), session_id),
+        )
+        conn.commit()
+        return True
+
+    def _load_turns(self, session_id: str) -> list[Turn]:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT * FROM turns WHERE session_id=? ORDER BY id ASC", (session_id,)
+        ).fetchall()
+        turns = []
+        for row in rows:
+            try:
+                sources = json.loads(row["sources"])
+            except Exception:
+                sources = []
+            turns.append(Turn(
+                role=row["role"], content=row["content"],
+                sources=sources, timestamp=row["timestamp"],
+            ))
+        return turns
 
 
-# Singleton
 _store = MemoryStore()
 
 def get_memory_store() -> MemoryStore:

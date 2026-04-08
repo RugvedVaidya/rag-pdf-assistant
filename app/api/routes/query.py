@@ -32,8 +32,11 @@ async def ask_question(request: QueryRequest):
         history_text=history_text,
     )
     result.session_id = session.id
-    session.add_turn("user", request.question)
-    session.add_turn("assistant", result.answer, [s.model_dump() for s in result.sources])
+
+    # Persist both turns to SQLite
+    store.save_turn(session.id, "user", request.question, [])
+    store.save_turn(session.id, "assistant", result.answer,
+                    [s.model_dump() for s in result.sources])
     return result
 
 
@@ -48,9 +51,10 @@ async def ask_question_stream(request: QueryRequest):
         collected_answer = ""
         collected_sources = []
         try:
-            # Retrieve
             query_embedding = chain._embedder.embed(request.question)
-            matches = chain._vector_store.query(query_embedding, namespace=request.namespace, top_k=request.top_k)
+            matches = chain._vector_store.query(
+                query_embedding, namespace=request.namespace, top_k=request.top_k
+            )
 
             if not matches:
                 yield f"event: error\ndata: {json.dumps({'message': 'No relevant documents found.'})}\n\n"
@@ -64,32 +68,32 @@ async def ask_question_stream(request: QueryRequest):
                 page = meta.get("page", 0)
                 chunk_type = meta.get("chunk_type", "text")
                 context_parts.append(f"[Source: {filename}, Page {page}]\n{text}")
-                src = {
+                sources.append({
                     "text": text[:400], "filename": filename, "page": page,
                     "score": round(match.get("score", 0.0), 4),
                     "doc_id": meta.get("doc_id", ""),
                     "chunk_type": chunk_type,
-                }
-                sources.append(src)
+                })
 
             collected_sources = sources
 
-            # Send session_id and sources immediately
             yield f"event: session\ndata: {json.dumps({'session_id': session.id})}\n\n"
             yield f"event: sources\ndata: {json.dumps(sources)}\n\n"
 
-            # Build prompt with history
             context = "\n\n---\n\n".join(context_parts)
-            history_section = f"\nConversation history:\n{history_text}\n" if history_text.strip() else ""
+            history_section = (f"\nConversation history:\n{history_text}\n"
+                               if history_text.strip() else "")
             prompt = chain._chain.first.format(
-                context=context, question=request.question, history_section=history_section
+                context=context, question=request.question,
+                history_section=history_section,
             )
 
             from langchain_ollama import OllamaLLM
             from app.core.config import get_settings
             settings = get_settings()
             llm = OllamaLLM(base_url=settings.ollama_base_url,
-                            model=settings.ollama_llm_model, temperature=request.temperature)
+                            model=settings.ollama_llm_model,
+                            temperature=request.temperature)
 
             async for chunk in llm.astream(prompt):
                 if chunk:
@@ -102,13 +106,17 @@ async def ask_question_stream(request: QueryRequest):
             logger.error("stream_error", error=str(e))
             yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
         finally:
-            # Save to memory regardless of streaming outcome
+            # Always persist to SQLite, even if stream was partial
             if collected_answer:
-                session.add_turn("user", request.question)
-                session.add_turn("assistant", collected_answer, collected_sources)
+                store.save_turn(session.id, "user", request.question, [])
+                store.save_turn(session.id, "assistant", collected_answer, collected_sources)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
+    )
 
 
 @router.post("/search", response_model=SearchResponse)
