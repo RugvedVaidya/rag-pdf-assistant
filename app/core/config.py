@@ -10,10 +10,12 @@ class Settings(BaseSettings):
     pinecone_index_name: str = "rag-pdf-index"
     pinecone_environment: str = "us-east-1"
 
-    # Ollama
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_llm_model: str = "llama3.2"
-    ollama_embed_model: str = "nomic-embed-text"
+    # Groq (LLM inference)
+    groq_api_key: str
+    groq_model: str = "llama-3.1-8b-instant"
+
+    # Embeddings — fastembed runs locally, no API needed
+    embed_model: str = "BAAI/bge-base-en-v1.5"   # 768-dim, matches existing Pinecone index
 
     # Chunking
     chunk_size: int = 1000
@@ -21,6 +23,9 @@ class Settings(BaseSettings):
 
     # Retrieval
     top_k_results: int = 5
+
+    # Query rewriting
+    query_rewrite_enabled: bool = True
 
     # App
     app_env: str = "development"

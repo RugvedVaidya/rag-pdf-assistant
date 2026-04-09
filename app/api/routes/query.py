@@ -32,8 +32,6 @@ async def ask_question(request: QueryRequest):
         history_text=history_text,
     )
     result.session_id = session.id
-
-    # Persist both turns to SQLite
     store.save_turn(session.id, "user", request.question, [])
     store.save_turn(session.id, "assistant", result.answer,
                     [s.model_dump() for s in result.sources])
@@ -51,62 +49,75 @@ async def ask_question_stream(request: QueryRequest):
         collected_answer = ""
         collected_sources = []
         try:
-            query_embedding = chain._embedder.embed(request.question)
-            matches = chain._vector_store.query(
-                query_embedding, namespace=request.namespace, top_k=request.top_k
+            # 1. Rewrite query
+            search_query, was_rewritten = chain._rewriter.rewrite(
+                request.question, history_text
             )
+            if was_rewritten:
+                yield f"event: rewrite\ndata: {json.dumps({'original': request.question, 'rewritten': search_query})}\n\n"
+
+            # 2. Retrieve + deduplicate
+            query_embedding = chain._embedder.embed(search_query)
+            raw_matches = chain._vector_store.query(
+                query_embedding,
+                namespace=request.namespace,
+                top_k=request.top_k + 3,
+            )
+            matches = chain._deduplicate_matches(raw_matches)[:request.top_k]
 
             if not matches:
                 yield f"event: error\ndata: {json.dumps({'message': 'No relevant documents found.'})}\n\n"
                 return
 
+            # 3. Build context and sources
             context_parts, sources = [], []
-            for match in matches:
+            for i, match in enumerate(matches, start=1):
                 meta = match.get("metadata", {})
                 text = meta.get("text", "")
                 filename = meta.get("filename", "unknown")
                 page = meta.get("page", 0)
                 chunk_type = meta.get("chunk_type", "text")
-                context_parts.append(f"[Source: {filename}, Page {page}]\n{text}")
+                context_parts.append(f"[{i}] Source: {filename}, Page {page}\n{text}")
                 sources.append({
                     "text": text[:400], "filename": filename, "page": page,
                     "score": round(match.get("score", 0.0), 4),
                     "doc_id": meta.get("doc_id", ""),
                     "chunk_type": chunk_type,
                 })
-
             collected_sources = sources
 
+            # 4. Emit session + sources immediately
             yield f"event: session\ndata: {json.dumps({'session_id': session.id})}\n\n"
             yield f"event: sources\ndata: {json.dumps(sources)}\n\n"
 
+            # 5. Build context string and history
             context = "\n\n---\n\n".join(context_parts)
-            history_section = (f"\nConversation history:\n{history_text}\n"
-                               if history_text.strip() else "")
-            prompt = chain._chain.first.format(
-                context=context, question=request.question,
-                history_section=history_section,
+            history_section = (
+                f"Conversation history (for follow-up context):\n{history_text}\n"
+                if history_text.strip() else ""
             )
 
-            from langchain_ollama import OllamaLLM
+            # 6. Stream via the RAG chain directly
+            # chain._chain is: ChatPromptTemplate | ChatGroq | StrOutputParser
+            # We pass the same variables and stream the output
             from app.core.config import get_settings
             settings = get_settings()
-            llm = OllamaLLM(base_url=settings.ollama_base_url,
-                            model=settings.ollama_llm_model,
-                            temperature=request.temperature)
 
-            async for chunk in llm.astream(prompt):
+            async for chunk in chain._chain.astream({
+                "context": context,
+                "question": request.question,
+                "history_section": history_section,
+            }):
                 if chunk:
                     collected_answer += chunk
                     yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
 
-            yield f"event: done\ndata: {json.dumps({'model': settings.ollama_llm_model, 'session_id': session.id})}\n\n"
+            yield f"event: done\ndata: {json.dumps({'model': settings.groq_model, 'session_id': session.id, 'was_rewritten': was_rewritten})}\n\n"
 
         except Exception as e:
             logger.error("stream_error", error=str(e))
             yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
         finally:
-            # Always persist to SQLite, even if stream was partial
             if collected_answer:
                 store.save_turn(session.id, "user", request.question, [])
                 store.save_turn(session.id, "assistant", collected_answer, collected_sources)

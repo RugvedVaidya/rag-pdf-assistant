@@ -1,4 +1,12 @@
-import httpx
+"""
+Embedding service using FastEmbed — runs fully locally, no API key needed.
+Uses BAAI/bge-small-en-v1.5 which produces 768-dim vectors, same as the
+previous nomic-embed-text model, so existing Pinecone indexes are compatible.
+
+FastEmbed downloads the model on first use (~130MB) and caches it locally.
+On Render, the model is cached in the Docker image via requirements install.
+"""
+from functools import lru_cache
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
@@ -7,44 +15,52 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-class OllamaEmbedder:
-    """Generates embeddings using Ollama's local embedding models."""
+class Embedder:
+    """Local embedding using FastEmbed — zero API cost, zero latency overhead."""
 
     def __init__(self):
         settings = get_settings()
-        self.base_url = settings.ollama_base_url
-        self.model = settings.ollama_embed_model
-        self._client = httpx.Client(timeout=60.0)
+        self.model_name = settings.embed_model
+        self._model = self._load_model()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+    def _load_model(self):
+        try:
+            from fastembed import TextEmbedding
+            logger.info("loading_embed_model", model=self.model_name)
+            model = TextEmbedding(model_name=self.model_name)
+            logger.info("embed_model_loaded", model=self.model_name)
+            return model
+        except ImportError:
+            raise RuntimeError("fastembed not installed. Run: pip install fastembed")
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=5))
     def embed(self, text: str) -> list[float]:
         """Embed a single text string."""
-        response = self._client.post(
-            f"{self.base_url}/api/embeddings",
-            json={"model": self.model, "prompt": text},
-        )
-        response.raise_for_status()
-        return response.json()["embedding"]
+        embeddings = list(self._model.embed([text]))
+        return embeddings[0].tolist()
 
-    def embed_batch(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
-        """Embed a list of texts in batches."""
-        embeddings = []
-        total = len(texts)
-
-        for i in range(0, total, batch_size):
-            batch = texts[i : i + batch_size]
-            logger.info("embedding_batch", start=i, end=min(i + batch_size, total), total=total)
-            for text in batch:
-                embeddings.append(self.embed(text))
-
-        return embeddings
+    def embed_batch(self, texts: list[str], batch_size: int = 64) -> list[list[float]]:
+        """
+        Embed a list of texts.
+        FastEmbed handles batching internally and is significantly faster
+        than calling embed() in a loop.
+        """
+        logger.info("embedding_batch", total=len(texts))
+        embeddings = list(self._model.embed(texts))
+        return [e.tolist() for e in embeddings]
 
     def check_health(self) -> bool:
         try:
-            response = self._client.get(f"{self.base_url}/api/tags", timeout=5.0)
-            return response.status_code == 200
+            test = self.embed("health check")
+            return len(test) > 0
         except Exception:
             return False
 
-    def __del__(self):
-        self._client.close()
+
+# Keep OllamaEmbedder as an alias so any existing imports don't break
+OllamaEmbedder = Embedder
+
+
+@lru_cache
+def get_embedder() -> Embedder:
+    return Embedder()

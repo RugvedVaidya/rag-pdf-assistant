@@ -7,10 +7,16 @@ pydantic-settings==2.5.2
 # LangChain
 langchain==0.3.1
 langchain-community==0.3.1
-langchain-ollama==0.2.0
+langchain-groq==0.2.1
+
+# Groq
+groq==0.11.0
 
 # Pinecone
-pinecone-client==5.0.1
+pinecone==5.0.1
+
+# Embeddings (local, no API key needed)
+fastembed==0.3.6
 
 # PDF processing
 PyMuPDF==1.24.10

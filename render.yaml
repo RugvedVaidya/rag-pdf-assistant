@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: rag-pdf-assistant
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # $7/mo — needed for persistent disk
+    region: oregon
+    branch: main
+    healthCheckPath: /health
+
+    envVars:
+      - key: PINECONE_API_KEY
+        sync: false        # set manually in Render dashboard
+      - key: PINECONE_INDEX_NAME
+        value: rag-pdf-index
+      - key: PINECONE_ENVIRONMENT
+        value: us-east-1
+      - key: GROQ_API_KEY
+        sync: false        # set manually in Render dashboard
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
+      - key: EMBED_MODEL
+        value: BAAI/bge-small-en-v1.5
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: QUERY_REWRITE_ENABLED
+        value: "true"
+      - key: CHUNK_SIZE
+        value: "1000"
+      - key: CHUNK_OVERLAP
+        value: "200"
+      - key: MAX_FILE_SIZE_MB
+        value: "50"
+
+    disk:
+      name: sqlite-data
+      mountPath: /app/data
+      sizeGB: 1

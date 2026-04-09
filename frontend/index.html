@@ -168,6 +168,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--f
 .src-chip-score{font-family:var(--font-mono);font-size:10px;color:var(--accent);background:var(--accent-bg);padding:2px 6px;border-radius:4px;flex-shrink:0}
 .src-chip-type{font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px}
 .src-chip-type.table{background:var(--blue-bg);color:var(--blue)}
+/* Rewrite badge */
+.rewrite-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--purple);background:rgba(155,143,212,0.1);border:1px solid rgba(155,143,212,0.2);border-radius:6px;padding:4px 10px;margin-bottom:6px;font-family:var(--font-mono)}
+.rewrite-badge .rb-icon{font-size:10px}
+.rewrite-badge .rb-original{color:var(--muted);text-decoration:line-through;margin-right:4px}
+.rewrite-badge .rb-arrow{color:var(--muted)}
 
 /* Export modal */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center}
@@ -325,7 +330,10 @@ body.light{
 </div>
 
 <script>
-const API = 'http://127.0.0.1:8000';
+// Auto-detect API URL: use same origin in production, localhost in dev
+const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://127.0.0.1:8000'
+  : window.location.origin;
 const docs = [];
 let sessions = [];
 let activeSessionId = null;
@@ -365,9 +373,9 @@ async function checkHealth() {
   try {
     const r = await fetch(`${API}/health`);
     const d = await r.json();
-    const ok = d.ollama === 'ok' && d.pinecone === 'ok';
+    const ok = d.pinecone === 'ok';
     document.getElementById('sdot').className = 'sdot ' + (ok ? 'ok' : 'err');
-    document.getElementById('stext').textContent = ok ? 'ollama ✓  pinecone ✓' : `ollama:${d.ollama}  pinecone:${d.pinecone}`;
+    document.getElementById('stext').textContent = ok ? `groq ✓  pinecone ✓` : `groq:${d.llm || 'err'}  pinecone:${d.pinecone}`;
   } catch {
     document.getElementById('sdot').className = 'sdot err';
     document.getElementById('stext').textContent = 'server unreachable';
@@ -721,8 +729,14 @@ async function sendQuestion() {
           try {
             const data = JSON.parse(line.slice(6).trim());
             if (event === 'session' && data.session_id) {
-              // Update session id if server assigned one
               activeSessionId = data.session_id;
+            } else if (event === 'rewrite') {
+              // Show rewrite badge above the thinking bubble
+              const rewriteEl = document.createElement('div');
+              rewriteEl.className = 'rewrite-badge';
+              rewriteEl.innerHTML = `<span class="rb-icon">✦</span><span class="rb-original">${data.original.slice(0,40)}${data.original.length>40?'…':''}</span><span class="rb-arrow">→</span><span>${data.rewritten.slice(0,60)}${data.rewritten.length>60?'…':''}</span>`;
+              const msgBody = document.getElementById(msgId)?.querySelector('.msg-body');
+              if (msgBody) msgBody.insertBefore(rewriteEl, msgBody.firstChild);
             } else if (event === 'sources') {
               sourcesData = data;
             } else if (event === 'token') {

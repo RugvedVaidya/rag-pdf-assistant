@@ -2,7 +2,7 @@ import uuid
 import fitz  # PyMuPDF
 import re
 from dataclasses import dataclass, field
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
