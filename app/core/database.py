@@ -1,8 +1,11 @@
 """
 SQLite database layer.
-Handles connection management, schema creation, and migrations.
-Database file is stored at data/docwise.db relative to project root.
+DB_PATH is configurable via the DB_PATH environment variable.
+- Local dev:        data/docwise.db
+- HF Spaces:        /app/data/docwise.db  (persistent within a session)
+- Render free tier: /tmp/docwise.db
 """
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -10,10 +13,9 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Thread-local storage for connections (sqlite3 connections are not thread-safe)
 _local = threading.local()
 
-DB_PATH = Path("data/docwise.db")
+DB_PATH = Path(os.environ.get("DB_PATH", "data/docwise.db"))
 
 
 def get_connection() -> sqlite3.Connection:
@@ -21,8 +23,8 @@ def get_connection() -> sqlite3.Connection:
     if not hasattr(_local, "conn") or _local.conn is None:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-        conn.row_factory = sqlite3.Row          # rows behave like dicts
-        conn.execute("PRAGMA journal_mode=WAL")  # better concurrent read performance
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         _local.conn = conn
     return _local.conn
@@ -32,7 +34,6 @@ def init_db() -> None:
     """Create all tables if they don't exist. Safe to call on every startup."""
     conn = get_connection()
     conn.executescript("""
-        -- ── Sessions ──────────────────────────────────────────────────────
         CREATE TABLE IF NOT EXISTS sessions (
             id          TEXT PRIMARY KEY,
             title       TEXT NOT NULL DEFAULT 'New chat',
@@ -41,19 +42,17 @@ def init_db() -> None:
             updated_at  TEXT NOT NULL
         );
 
-        -- ── Turns ─────────────────────────────────────────────────────────
         CREATE TABLE IF NOT EXISTS turns (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
             role        TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
             content     TEXT NOT NULL,
-            sources     TEXT NOT NULL DEFAULT '[]',   -- JSON array
+            sources     TEXT NOT NULL DEFAULT '[]',
             timestamp   TEXT NOT NULL
         );
 
         CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
 
-        -- ── Documents ─────────────────────────────────────────────────────
         CREATE TABLE IF NOT EXISTS documents (
             doc_id      TEXT PRIMARY KEY,
             filename    TEXT NOT NULL,

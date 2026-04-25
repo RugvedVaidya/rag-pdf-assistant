@@ -1,8 +1,19 @@
+---
+title: Docwise RAG PDF Assistant
+emoji: 📚
+colorFrom: yellow
+colorTo: orange
+sdk: docker
+pinned: false
+license: mit
+short_description: Chat with your PDF documents using RAG + Groq + Pinecone
+---
+
 # Docwise — RAG PDF Assistant
 
 A production-ready Retrieval-Augmented Generation (RAG) system for querying PDF documents using **FastAPI**, **LangChain**, **Groq** (LLM), **FastEmbed** (local embeddings), and **Pinecone** (vector database).
 
-🚀 **Deployed on Render** · 💬 **Streaming answers** · 🧠 **Conversation memory** · 📊 **Table extraction** · ✍️ **Query rewriting**
+💬 **Streaming answers** · 🧠 **Conversation memory** · 📊 **Table extraction** · ✍️ **Query rewriting**
 
 ---
 
@@ -27,11 +38,10 @@ User Query → Query Rewriter (Groq) → Embed Query → Similarity Search + Ded
 - **Query rewriting** — vague follow-up questions are rewritten into better search queries before retrieval
 - **Table extraction** — pdfplumber extracts tables from PDFs and stores them as structured chunks
 - **Chunk deduplication** — overlapping chunks are deduplicated before sending to the LLM
-- **Document registry** — SQLite tracks all indexed documents (no unreliable Pinecone list queries)
+- **Document registry** — SQLite tracks all indexed documents
 - **Duplicate detection** — re-uploading a PDF automatically replaces the old version
 - **Namespace support** — separate document collections in isolated Pinecone namespaces
-- **Bulk ingestion CLI** — ingest entire folders of PDFs from the command line
-- **Dark/light theme** — persistent theme preference saved to localStorage
+- **Dark/light theme** — persistent theme preference
 - **Export** — download any conversation as Markdown, JSON, or plain text
 
 ---
@@ -46,9 +56,9 @@ User Query → Query Rewriter (Groq) → Embed Query → Similarity Search + Ded
 | Vector database | Pinecone (serverless) |
 | PDF processing | PyMuPDF + pdfplumber |
 | Text splitting | LangChain RecursiveCharacterTextSplitter |
-| Session storage | SQLite (via Python stdlib) |
+| Session storage | SQLite |
 | Frontend | Vanilla HTML/CSS/JS (served by FastAPI) |
-| Deployment | Render (Docker) |
+| Deployment | HuggingFace Spaces (Docker) |
 
 ---
 
@@ -81,13 +91,10 @@ rag-pdf-assistant/
 │   └── index.html                   # Full chat UI (served at /)
 ├── scripts/
 │   └── ingest_bulk.py               # CLI for bulk PDF ingestion
-├── tests/
-│   ├── test_ingest.py
-│   └── test_query.py
 ├── data/
 │   └── .gitkeep                     # SQLite DB created here at runtime
-├── Dockerfile                       # Docker image for Render
-├── render.yaml                      # Render deployment config
+├── Dockerfile                       # Docker image for HF Spaces
+├── render.yaml                      # Alternative Render deployment config
 ├── .env.example
 ├── requirements.txt
 └── README.md
@@ -97,11 +104,10 @@ rag-pdf-assistant/
 
 ## Prerequisites
 
-- Python 3.10+
 - A [Pinecone](https://pinecone.io) account — free tier works
 - A [Groq](https://console.groq.com) API key — free tier works
 
-> No GPU or local model required. Groq runs the LLM in the cloud and FastEmbed runs a small embedding model (~120MB) locally.
+> No GPU or local model required. Groq runs the LLM in the cloud and FastEmbed runs a small embedding model (~120MB) locally inside the container.
 
 ---
 
@@ -123,7 +129,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` with your credentials:
+Edit `.env`:
 
 ```env
 PINECONE_API_KEY=your_pinecone_key
@@ -140,18 +146,20 @@ Open `http://localhost:8000` — the UI is served directly by FastAPI.
 
 ---
 
-## Deployment on Render
+## Deploying to HuggingFace Spaces
 
-1. Push this repo to GitHub
-2. Go to [render.com](https://render.com) → **New → Web Service**
-3. Connect your GitHub repository — Render detects `render.yaml` automatically
-4. Go to **Environment** tab and add:
-   - `PINECONE_API_KEY` — your Pinecone key
-   - `GROQ_API_KEY` — your Groq key
-5. Click **Deploy**
-
-First deploy takes ~5 minutes (Docker build + FastEmbed model download).
-Your app will be live at `https://rag-pdf-assistant.onrender.com`.
+1. Create a new Space at [huggingface.co/new-space](https://huggingface.co/new-space)
+   - SDK: **Docker**
+   - Visibility: Public
+2. Push this repo to the Space:
+   ```bash
+   git remote add space https://huggingface.co/spaces/YOUR_USERNAME/rag-pdf-assistant
+   git push space main
+   ```
+3. Add secrets in Space **Settings → Variables and Secrets**:
+   - `PINECONE_API_KEY`
+   - `GROQ_API_KEY`
+4. The Space builds automatically — first build takes ~5 minutes.
 
 ---
 
@@ -161,17 +169,17 @@ Your app will be live at `https://rag-pdf-assistant.onrender.com`.
 |--------|----------|-------------|
 | `GET` | `/` | Serves the chat frontend |
 | `POST` | `/api/ingest/upload` | Upload and index a PDF |
-| `DELETE` | `/api/ingest/delete/{doc_id}` | Remove a document from Pinecone + registry |
-| `GET` | `/api/ingest/list` | List indexed documents (from SQLite) |
-| `POST` | `/api/query/ask` | Ask a question (RAG, non-streaming) |
-| `POST` | `/api/query/ask/stream` | Ask a question (SSE streaming) |
-| `POST` | `/api/query/search` | Raw similarity search (no LLM) |
-| `POST` | `/api/sessions` | Create a new conversation session |
-| `GET` | `/api/sessions` | List all sessions |
-| `GET` | `/api/sessions/{id}` | Get session with full turn history |
-| `DELETE` | `/api/sessions/{id}` | Delete a session |
-| `POST` | `/api/sessions/{id}/clear` | Clear a session's history |
-| `GET` | `/health` | Health check (Groq + Pinecone status) |
+| `DELETE` | `/api/ingest/delete/{doc_id}` | Remove a document |
+| `GET` | `/api/ingest/list` | List indexed documents |
+| `POST` | `/api/query/ask` | Ask a question (RAG) |
+| `POST` | `/api/query/ask/stream` | Streaming SSE response |
+| `POST` | `/api/query/search` | Raw similarity search |
+| `POST` | `/api/sessions` | Create session |
+| `GET` | `/api/sessions` | List sessions |
+| `GET` | `/api/sessions/{id}` | Get session with history |
+| `DELETE` | `/api/sessions/{id}` | Delete session |
+| `POST` | `/api/sessions/{id}/clear` | Clear session history |
+| `GET` | `/health` | Health check |
 
 ---
 
@@ -181,55 +189,28 @@ Your app will be live at `https://rag-pdf-assistant.onrender.com`.
 |----------|-------------|---------|
 | `PINECONE_API_KEY` | Pinecone API key | required |
 | `PINECONE_INDEX_NAME` | Pinecone index name | `rag-pdf-index` |
-| `PINECONE_ENVIRONMENT` | Pinecone region | `us-east-1` |
 | `GROQ_API_KEY` | Groq API key | required |
 | `GROQ_MODEL` | Groq model ID | `llama-3.1-8b-instant` |
-| `EMBED_MODEL` | FastEmbed model name | `BAAI/bge-base-en-v1.5` |
+| `EMBED_MODEL` | FastEmbed model | `BAAI/bge-base-en-v1.5` |
 | `CHUNK_SIZE` | Characters per chunk | `1000` |
 | `CHUNK_OVERLAP` | Overlap between chunks | `200` |
 | `TOP_K_RESULTS` | Default retrieval count | `5` |
 | `QUERY_REWRITE_ENABLED` | Enable query rewriting | `true` |
+| `DB_PATH` | SQLite database path | `data/docwise.db` |
 | `MAX_FILE_SIZE_MB` | Max PDF upload size | `50` |
 
 ---
 
-## How It Works
+## SSE Stream Events
 
-### Ingestion
-1. PDF uploaded to `/api/ingest/upload`
-2. PyMuPDF extracts text per page; pdfplumber extracts tables
-3. Tables are formatted as markdown and stored as separate chunks with `chunk_type=table`
-4. Text chunks are split using `RecursiveCharacterTextSplitter` (1000 chars, 200 overlap)
-5. All chunks are embedded using FastEmbed (`BAAI/bge-base-en-v1.5`, 768-dim, runs locally)
-6. Vectors + metadata upserted to Pinecone; document registered in SQLite
-
-### Querying
-1. User question + conversation history passed to the **query rewriter** (Groq)
-2. Rewritten query is embedded with FastEmbed
-3. Top-(k+3) chunks retrieved from Pinecone via cosine similarity
-4. Near-duplicate chunks removed (>60% word overlap or same-page adjacent chunks)
-5. Top-k deduplicated chunks built into numbered context
-6. Prompt assembled with context + history and streamed through Groq LLM
-7. Tokens streamed to frontend via SSE; turn saved to SQLite on completion
-
-### SSE Events (streaming)
 | Event | Payload | Description |
 |-------|---------|-------------|
 | `session` | `{session_id}` | Session ID assigned |
-| `rewrite` | `{original, rewritten}` | Query was rewritten (when applicable) |
-| `sources` | `[{filename, page, score, chunk_type}]` | Retrieved sources |
+| `rewrite` | `{original, rewritten}` | Query was rewritten |
+| `sources` | `[{filename, page, score}]` | Retrieved sources |
 | `token` | `{text}` | LLM token |
-| `done` | `{model, session_id, was_rewritten}` | Stream complete |
+| `done` | `{model, session_id}` | Stream complete |
 | `error` | `{message}` | Error occurred |
-
----
-
-## Bulk Ingestion CLI
-
-```bash
-python scripts/ingest_bulk.py --folder ./pdfs --namespace my-docs
-python scripts/ingest_bulk.py --folder ./pdfs --namespace my-docs --recursive
-```
 
 ---
 

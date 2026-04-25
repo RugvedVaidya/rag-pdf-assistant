@@ -14,15 +14,18 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download the FastEmbed model during build so it's cached in the image
-# This avoids a cold-start delay on first request
-RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5').embed(['warmup']))"
+RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-base-en-v1.5').embed(['warmup']))"
 
 # Copy application code
 COPY . .
 
 # Create data directory for SQLite
-RUN mkdir -p data
+RUN mkdir -p /app/data
 
-EXPOSE 8000
+# HuggingFace Spaces runs as a non-root user — ensure data dir is writable
+RUN chmod -R 777 /app/data
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# HuggingFace Spaces requires port 7860
+EXPOSE 7860
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]

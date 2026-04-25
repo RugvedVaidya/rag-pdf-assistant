@@ -13,9 +13,8 @@ build/
 venv/
 .venv/
 env/
-.env
 
-# Environment variables (keep .env.example, ignore .env)
+# Environment variables
 .env
 
 # IDE
@@ -43,3 +42,15 @@ uploads/
 
 # Pinecone / vector store cache
 .pinecone/
+
+# SQLite database (auto-created at runtime)
+data/docwise.db
+data/docwise.db-shm
+data/docwise.db-wal
+
+# FastEmbed model cache
+.fastembed_cache/
+fastembed_cache/
+
+# HuggingFace cache
+.cache/
