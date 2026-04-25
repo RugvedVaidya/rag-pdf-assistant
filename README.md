@@ -2,7 +2,7 @@
 title: Docwise RAG PDF Assistant
 emoji: 📚
 colorFrom: yellow
-colorTo: orange
+colorTo: red
 sdk: docker
 pinned: false
 license: mit
