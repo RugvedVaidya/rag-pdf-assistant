@@ -242,9 +242,11 @@ body.light{
       <input type="file" id="fileInput" accept=".pdf" multiple onchange="handleFiles(this.files)">
     </div>
     <div class="ns-row">
-      <label>ns</label>
-      <input type="text" id="nsInput" value="default" placeholder="default">
+      <label title="Each browser gets a unique isolated namespace">ns</label>
+      <input type="text" id="nsInput" placeholder="your-namespace" title="Your isolated namespace — unique per browser" readonly>
+      <button onclick="resetNamespace()" title="Generate new namespace" style="background:none;border:1px solid var(--border2);border-radius:5px;color:var(--muted);cursor:pointer;padding:3px 7px;font-size:11px;flex-shrink:0" >↺</button>
     </div>
+    <div style="padding:0 8px 6px;font-size:10px;color:var(--muted2)">🔒 Your private space</div>
     <div id="docsList"></div>
   </div>
 
@@ -349,6 +351,35 @@ function saveLocal() {
   } catch {}
 }
 
+function generateNamespace() {
+  // Generate a short unique namespace for this browser
+  // Uses adjective + noun + number for readability
+  const adj = ['swift','calm','bold','wise','cool','keen','neat','pure','vast','firm'];
+  const noun = ['river','cloud','stone','light','blade','forge','peaks','grove','ridge','field'];
+  const num = Math.floor(Math.random() * 900) + 100;
+  return `${adj[Math.floor(Math.random()*adj.length)]}-${noun[Math.floor(Math.random()*noun.length)]}-${num}`;
+}
+
+function getOrCreateNamespace() {
+  try {
+    let ns = localStorage.getItem('docwise_namespace');
+    if (!ns) {
+      ns = generateNamespace();
+      localStorage.setItem('docwise_namespace', ns);
+    }
+    return ns;
+  } catch {
+    return generateNamespace();
+  }
+}
+
+function resetNamespace() {
+  if (!confirm('Generate a new namespace? Your current documents will stay in the old namespace.')) return;
+  try { localStorage.removeItem('docwise_namespace'); } catch {}
+  const ns = getOrCreateNamespace();
+  document.getElementById('nsInput').value = ns;
+}
+
 function loadLocal() {
   try {
     const s = localStorage.getItem('docwise_sessions');
@@ -358,6 +389,10 @@ function loadLocal() {
     const t = localStorage.getItem('docwise_theme');
     if (t === 'light') { isDark = false; document.body.classList.add('light'); document.getElementById('themeBtn').textContent = '☀️'; }
   } catch {}
+  // Set the namespace input to this browser's unique namespace
+  const ns = getOrCreateNamespace();
+  const nsInput = document.getElementById('nsInput');
+  if (nsInput) nsInput.value = ns;
 }
 
 // ── Theme ──
